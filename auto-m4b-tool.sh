@@ -1,7 +1,12 @@
 #!/bin/bash
+
+DEBUG="${DEBUG:-"false"}"
+
 # set m to 1
 m=1
+
 #variable defenition
+SLEEPTIME="${SLEEPTIME:-"1m"}"
 inputfolder="${INPUT_FOLDER:-"/temp/merge/"}"
 outputfolder="${OUTPUT_FOLDER:-"/temp/untagged/"}"
 originalfolder="${ORIGINAL_FOLDER:-"/temp/recentlyadded/"}"
@@ -10,6 +15,32 @@ backupfolder="${BACKUP_FOLDER:-"/temp/backup/"}"
 binfolder="${BIN_FOLDER:-"/temp/delete/"}"
 m4bend=".m4b"
 logend=".log"
+
+function log() {
+	echo "$@"
+}
+
+is_debug() {
+	if [[ "$DEBUG" == "true" || "$DEBUG" == 1 ]]; then
+		true
+	else
+		false
+	fi
+}
+
+if is_debug; then
+	log "DEBUG modes is enabled"
+fi
+
+if is_debug; then
+	echo "whaomi=$(id)"
+	echo "inputfolder=$inputfolder"
+	echo "outputfolder=$outputfolder"
+	echo "originalfolder=$originalfolder"
+	echo "fixitfolder=$fixitfolder"
+	echo "backupfolder=$backupfolder"
+	echo "binfolder=$binfolder"
+fi
 
 #ensure the expected folder-structure
 mkdir -p "$inputfolder"
@@ -23,26 +54,20 @@ mkdir -p "$binfolder"
 username="$(whoami)"
 userid="$(id -u $username)"
 groupid="$(id -g $username)"
-chown -R $userid:$groupid /temp 
 
-#adjust the number of cores depending on the ENV CPU_CORES
-if [ -z "$CPU_CORES" ]
-then
-      echo "Using all CPU cores as not other defined."
-	  CPUcores=$(nproc --all)
-else
-      echo "Using $CPU_CORES CPU cores as defined."
-	  CPUcores="$CPU_CORES"
+if is_debug; then
+	echo "username=$username"
+	echo "userid=$userid"
+	echo "groupid=$groupid"
 fi
 
-#adjust the interval of the runs depending on the ENV SLEEPTIME
-if [ -z "$SLEEPTIME" ]
-then
-      echo "Using standard 1 min sleep time."
-	  sleeptime=1m
+#adjust the number of cores depending on the ENV CPU_CORES
+if [ -z "$CPU_CORES" ]; then
+	echo "Using all CPU cores as not other defined."
+	CPUcores=$(nproc --all)
 else
-      echo "Using $SLEEPTIME min sleep time."
-	  sleeptime="$SLEEPTIME"
+	echo "Using $CPU_CORES CPU cores as defined."
+	CPUcores="$CPU_CORES"
 fi
 
 #change to the merge folder, keeps this clear and the script could be kept inside the container
@@ -70,52 +95,51 @@ while [ $m -ge 0 ]; do
 
 	# Finds folders with nested subfolders - renames and flattens files into a single folder
 	echo "Flattening nested subfolders 3 levels deep or more and renaming files..."
-	find "$originalfolder" -mindepth 3 -type f \( -name '*.mp3' -o -name '*.m4b' -o -name '*.m4a' \) -print0 | 
-	while IFS= read -r -d '' file; do
+	find "$originalfolder" -mindepth 3 -type f \( -name '*.mp3' -o -name '*.m4b' -o -name '*.m4a' \) -print0 |
+		while IFS= read -r -d '' file; do
 			# Get the relative path from the original folder
 			relative_path="${file#$originalfolder/}"
-			
+
 			# Split the path into an array
-			IFS='/' read -ra path_parts <<< "$relative_path"
+			IFS='/' read -ra path_parts <<<"$relative_path"
 
 			# Only process if the file is at least 3 levels deep
 			if [ ${#path_parts[@]} -ge 4 ]; then
-					# Get the filename (last element)
-					filename="${path_parts[-1]}"
-					
-					# Get the grandparent directory
-					grandparent="${path_parts[3]}"
+				# Get the filename (last element)
+				filename="${path_parts[-1]}"
 
-					# Construct the new filename
-					new_filename=""
-					for ((i=4; i<${#path_parts[@]}-1; i++)); do
-							new_filename+="${path_parts[i]} - "
-					done
-					new_filename+="$filename"
-					
-					# Create the new path (2 levels deep)
-					new_path="$originalfolder/$grandparent/$new_filename"
-					
-					# Create the grandparent directory if it doesn't exist
-					mkdir -p "$(dirname "$new_path")"
-					
-					# Move and rename the file
-					mv -v "$file" "$new_path"
+				# Get the grandparent directory
+				grandparent="${path_parts[3]}"
+
+				# Construct the new filename
+				new_filename=""
+				for ((i = 4; i < ${#path_parts[@]} - 1; i++)); do
+					new_filename+="${path_parts[i]} - "
+				done
+				new_filename+="$filename"
+
+				# Create the new path (2 levels deep)
+				new_path="$originalfolder/$grandparent/$new_filename"
+
+				# Create the grandparent directory if it doesn't exist
+				mkdir -p "$(dirname "$new_path")"
+
+				# Move and rename the file
+				mv -v "$file" "$new_path"
 			fi
-	done
+		done
 
 	#Move folders with multiple audiofiles to inputfolder
 	echo "Moving folders with 2 or more audiofiles to $inputfolder "
-	find "$originalfolder" -maxdepth 2 -mindepth 2 -type f \( -name '*.mp3' -o -name '*.m4b' -o -name '*.m4a' \) -print0 | xargs -0 -L 1 dirname | sort | uniq -c | grep -E -v '^ *1 ' | sed 's/^ *[0-9]* //' | while read i; do mv -v "$i" $inputfolder; done
-
+	find "$originalfolder" -maxdepth 2 -mindepth 2 -type f \( -name '*.mp3' -o -name '*.m4b' -o -name '*.m4a' \) -print0 | xargs -r -0 -L 1 dirname | sort | uniq -c | grep -E -v '^ *1 ' | sed 's/^ *[0-9]* //' | while read i; do mv -v "$i" $inputfolder; done
 
 	#Move single file mp3's to inputfolder
 	echo "Moving single file mp3's to $inputfolder "
-	find "$originalfolder" -maxdepth 2 -type f \( -name '*.mp3' \) -printf "%h\0" | xargs -0 mv -t "$inputfolder"
+	find "$originalfolder" -maxdepth 2 -type f \( -name '*.mp3' \) -printf "%h\0" | xargs -r -0 mv -t "$inputfolder"
 
 	#Moving the single m4b files to the untagged folder as no Merge needed
 	echo "Moving all the single m4b books to $outputfolder "
-	find "$originalfolder" -maxdepth 2 -type f \( -iname \*.m4b -o -iname \*.mp4 -o -iname \*.m4a -o -iname \*.ogg \) -printf "%h\0" | xargs -0 mv -t "$outputfolder"
+	find "$originalfolder" -maxdepth 2 -type f \( -iname \*.m4b -o -iname \*.mp4 -o -iname \*.m4a -o -iname \*.ogg \) -printf "%h\0" | xargs -r -0 mv -t "$outputfolder"
 
 	# clear the folders
 	rm -r "$binfolder"* 2>/dev/null
@@ -127,7 +151,7 @@ while [ $m -ge 0 ]; do
 				mpthree=$(find "$book" -maxdepth 2 -type f \( -name '*.mp3' -o -name '*.m4b' \) | head -n 1)
 				m4bfile="$outputfolder$book/$book$m4bend"
 				logfile="$outputfolder$book/$book$logend"
-				chapters=$(ls "$inputfolder$book"/*chapters.txt 2> /dev/null | wc -l)
+				chapters=$(ls "$inputfolder$book"/*chapters.txt 2>/dev/null | wc -l)
 				if [ "$chapters" != "0" ]; then
 					echo Adjusting Chapters
 					mp4chaps -i "$inputfolder""$book"/*$m4bend
@@ -154,7 +178,7 @@ while [ $m -ge 0 ]; do
 			fi
 		done
 	else
-		echo No folders detected, next run $sleeptime min...
-		sleep $sleeptime
+		echo No folders detected, next run $SLEEPTIME min...
+		sleep $SLEEPTIME
 	fi
 done
